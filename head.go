@@ -1332,7 +1332,6 @@ type memSeries struct {
 	firstChunkID int
 
 	nextAt        int64 // Timestamp at which to cut the next chunk.
-	lastValue     float64
 	sampleBuf     [4]sample
 	pendingCommit bool // Whether there are samples waiting to be committed to this series.
 
@@ -1399,7 +1398,7 @@ func (s *memSeries) appendable(t int64, v float64) error {
 	}
 	// We are allowing exact duplicates as we can encounter them in valid cases
 	// like federation and erroring out at that time would be extremely noisy.
-	if math.Float64bits(s.lastValue) != math.Float64bits(v) {
+	if math.Float64bits(s.sampleBuf[3].v) != math.Float64bits(v) {
 		return ErrAmendSample
 	}
 	return nil
@@ -1465,8 +1464,6 @@ func (s *memSeries) append(t int64, v float64) (success, chunkCreated bool) {
 	s.app.Append(t, v)
 
 	c.maxTime = t
-
-	s.lastValue = v
 
 	s.sampleBuf[0] = s.sampleBuf[1]
 	s.sampleBuf[1] = s.sampleBuf[2]
