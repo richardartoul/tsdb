@@ -1,0 +1,24 @@
+package: github.com/prometheus/tsdb
+import:
+- package: github.com/cespare/xxhash
+- package: github.com/go-kit/kit
+  subpackages:
+  - log
+  - log/level
+- package: github.com/oklog/ulid
+- package: github.com/pkg/errors
+- package: github.com/prometheus/client_golang
+  subpackages:
+  - prometheus
+- package: golang.org/x/sync
+  subpackages:
+  - errgroup
+- package: golang.org/x/sys
+  subpackages:
+  - unix
+- package: gopkg.in/alecthomas/kingpin.v2
+- package: github.com/m3db/m3
+  subpackages:
+    - src/dbnode
+testImport:
+- package: github.com/dgryski/go-sip13

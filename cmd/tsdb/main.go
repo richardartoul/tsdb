@@ -31,10 +31,24 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/log"
+	"github.com/m3db/m3/src/cluster/shard"
+	"github.com/m3db/m3/src/dbnode/persist/fs"
+	"github.com/m3db/m3/src/dbnode/retention"
+	"github.com/m3db/m3/src/dbnode/sharding"
+	"github.com/m3db/m3/src/dbnode/storage"
+	"github.com/m3db/m3/src/dbnode/storage/namespace"
+	"github.com/m3db/m3/src/dbnode/storage/series"
+	"github.com/m3db/m3x/ident"
+	xtime "github.com/m3db/m3x/time"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/labels"
 	"gopkg.in/alecthomas/kingpin.v2"
+)
+
+var (
+	defaultM3DBNamespace = ident.StringID("defaultM3DBNamespace")
+	defaultSeriesID      = ident.StringID("default_m3db_id")
 )
 
 func main() {
@@ -44,6 +58,7 @@ func main() {
 		benchWriteCmd        = benchCmd.Command("write", "run a write performance benchmark")
 		benchWriteOutPath    = benchWriteCmd.Flag("out", "set the output path").Default("benchout").String()
 		benchWriteNumMetrics = benchWriteCmd.Flag("metrics", "number of metrics to read").Default("10000").Int()
+		storageEngine        = benchWriteCmd.Flag("engine", "storage engine to use for persisting the data").Default("tsdb").String()
 		benchSamplesFile     = benchWriteCmd.Arg("file", "input file with samples data, default is ("+filepath.Join("..", "testdata", "20kseries.json")+")").Default(filepath.Join("..", "testdata", "20kseries.json")).String()
 		listCmd              = cli.Command("ls", "list db blocks")
 		listCmdHumanReadable = listCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
@@ -53,9 +68,10 @@ func main() {
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
 	case benchWriteCmd.FullCommand():
 		wb := &writeBenchmark{
-			outPath:     *benchWriteOutPath,
-			numMetrics:  *benchWriteNumMetrics,
-			samplesFile: *benchSamplesFile,
+			outPath:       *benchWriteOutPath,
+			numMetrics:    *benchWriteNumMetrics,
+			samplesFile:   *benchSamplesFile,
+			storageEngine: *storageEngine,
 		}
 		wb.run()
 	case listCmd.FullCommand():
@@ -69,12 +85,14 @@ func main() {
 }
 
 type writeBenchmark struct {
-	outPath     string
-	samplesFile string
-	cleanup     bool
-	numMetrics  int
+	outPath       string
+	samplesFile   string
+	cleanup       bool
+	numMetrics    int
+	storageEngine string
 
-	storage *tsdb.DB
+	tsdbStorage *tsdb.DB
+	m3dbStorage storage.Database
 
 	cpuprof   *os.File
 	memprof   *os.File
@@ -82,7 +100,16 @@ type writeBenchmark struct {
 	mtxprof   *os.File
 }
 
+func (b *writeBenchmark) useM3DB() bool {
+	return b.storageEngine == "m3db"
+}
+
 func (b *writeBenchmark) run() {
+	if b.useM3DB() {
+		fmt.Println("Running with M3DB engine")
+	} else {
+		fmt.Println("Running with tsdb engine")
+	}
 	if b.outPath == "" {
 		dir, err := ioutil.TempDir("", "tsdb_bench")
 		if err != nil {
@@ -103,18 +130,68 @@ func (b *writeBenchmark) run() {
 	l := log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
 	l = log.With(l, "ts", log.DefaultTimestampUTC, "caller", log.DefaultCaller)
 
-	st, err := tsdb.Open(dir, l, nil, &tsdb.Options{
-		WALFlushInterval:  200 * time.Millisecond,
-		RetentionDuration: 15 * 24 * 60 * 60 * 1000, // 15 days in milliseconds
-		BlockRanges:       tsdb.ExponentialBlockRanges(2*60*60*1000, 5, 3),
-	})
-	if err != nil {
-		exitWithError(err)
+	if b.useM3DB() {
+		shardSet, err := sharding.NewShardSet([]shard.Shard{
+			shard.NewShard(0).SetState(shard.Available),
+		}, func(id ident.ID) uint32 { return uint32(0) })
+		if err != nil {
+			exitWithError(err)
+		}
+
+		ropts := retention.NewOptions().
+			SetRetentionPeriod(15 * 24 * 60 * 60 * 1000 * time.Millisecond).
+			SetBlockSize(2 * time.Hour)
+
+		md, err := namespace.NewMetadata(defaultM3DBNamespace,
+			namespace.NewOptions().
+				SetBootstrapEnabled(true).
+				SetFlushEnabled(true).
+				SetWritesToCommitLog(true).
+				SetCleanupEnabled(true).
+				SetRepairEnabled(false).
+				SetRetentionOptions(ropts))
+		if err != nil {
+			exitWithError(err)
+		}
+
+		fsOpts := fs.NewOptions()
+		pm, err := fs.NewPersistManager(fsOpts)
+		if err != nil {
+			exitWithError(err)
+		}
+
+		opts := storage.NewOptions().
+			SetSeriesCachePolicy(series.CacheRecentlyRead).
+			SetNamespaceInitializer(namespace.NewStaticInitializer([]namespace.Metadata{md})).
+			SetRepairEnabled(false).
+			SetPersistManager(pm)
+
+		db, err := storage.NewDatabase(shardSet, opts)
+		if err != nil {
+			exitWithError(err)
+		}
+
+		err = db.Open()
+		if err != nil {
+			exitWithError(err)
+		}
+		b.m3dbStorage = db
+	} else {
+		st, err := tsdb.Open(dir, l, nil, &tsdb.Options{
+			WALFlushInterval:  200 * time.Millisecond,
+			RetentionDuration: 15 * 24 * 60 * 60 * 1000, // 15 days in milliseconds
+			BlockRanges:       tsdb.ExponentialBlockRanges(2*60*60*1000, 5, 3),
+		})
+		if err != nil {
+			exitWithError(err)
+		}
+		b.tsdbStorage = st
 	}
-	b.storage = st
 
-	var metrics []labels.Labels
-
+	var (
+		metrics     []labels.Labels
+		m3dbMetrics []ident.Tags
+	)
 	measureTime("readData", func() {
 		f, err := os.Open(b.samplesFile)
 		if err != nil {
@@ -126,13 +203,22 @@ func (b *writeBenchmark) run() {
 		if err != nil {
 			exitWithError(err)
 		}
+
+		for _, metric := range metrics {
+			var m3dbMetric []ident.Tag
+			for _, tag := range metric {
+				m3dbMetric = append(m3dbMetric, ident.Tag{Name: ident.StringID(tag.Name), Value: ident.StringID(tag.Value)})
+			}
+			m3dbMetrics = append(m3dbMetrics, ident.NewTags(m3dbMetric...))
+		}
 	})
 
 	var total uint64
+	var err error
 
 	dur := measureTime("ingestScrapes", func() {
 		b.startProfiling()
-		total, err = b.ingestScrapes(metrics, 3000)
+		total, err = b.ingestScrapes(metrics, m3dbMetrics, 3000)
 		if err != nil {
 			exitWithError(err)
 		}
@@ -142,8 +228,14 @@ func (b *writeBenchmark) run() {
 	fmt.Println(" > samples/sec:", float64(total)/dur.Seconds())
 
 	measureTime("stopStorage", func() {
-		if err := b.storage.Close(); err != nil {
-			exitWithError(err)
+		if b.useM3DB() {
+			if err := b.m3dbStorage.Close(); err != nil {
+				exitWithError(err)
+			}
+		} else {
+			if err := b.tsdbStorage.Close(); err != nil {
+				exitWithError(err)
+			}
 		}
 		if err := b.stopProfiling(); err != nil {
 			exitWithError(err)
@@ -153,33 +245,59 @@ func (b *writeBenchmark) run() {
 
 const timeDelta = 30000
 
-func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, scrapeCount int) (uint64, error) {
+func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, m3dbMetrics []ident.Tags, scrapeCount int) (uint64, error) {
 	var mu sync.Mutex
 	var total uint64
 
 	for i := 0; i < scrapeCount; i += 100 {
 		var wg sync.WaitGroup
-		lbls := lbls
-		for len(lbls) > 0 {
-			l := 1000
-			if len(lbls) < 1000 {
-				l = len(lbls)
-			}
-			batch := lbls[:l]
-			lbls = lbls[l:]
 
-			wg.Add(1)
-			go func() {
-				n, err := b.ingestScrapesShard(batch, 100, int64(timeDelta*i))
-				if err != nil {
-					// exitWithError(err)
-					fmt.Println(" err", err)
+		if b.useM3DB() {
+			lbls := m3dbMetrics
+			for len(lbls) > 0 {
+				l := 1000
+				if len(lbls) < 1000 {
+					l = len(lbls)
 				}
-				mu.Lock()
-				total += n
-				mu.Unlock()
-				wg.Done()
-			}()
+				batch := lbls[:l]
+				lbls = lbls[l:]
+
+				wg.Add(1)
+				go func() {
+					n, err := b.ingestScrapesShard(nil, batch, 100, int64(timeDelta*i))
+					if err != nil {
+						// exitWithError(err)
+						fmt.Println(" err", err)
+					}
+					mu.Lock()
+					total += n
+					mu.Unlock()
+					wg.Done()
+				}()
+			}
+		} else {
+			lbls := lbls
+			for len(lbls) > 0 {
+				l := 1000
+				if len(lbls) < 1000 {
+					l = len(lbls)
+				}
+				batch := lbls[:l]
+				lbls = lbls[l:]
+
+				wg.Add(1)
+				go func() {
+					n, err := b.ingestScrapesShard(batch, nil, 100, int64(timeDelta*i))
+					if err != nil {
+						// exitWithError(err)
+						fmt.Println(" err", err)
+					}
+					mu.Lock()
+					total += n
+					mu.Unlock()
+					wg.Done()
+				}()
+			}
 		}
 		wg.Wait()
 	}
@@ -188,57 +306,86 @@ func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, scrapeCount int) (u
 	return total, nil
 }
 
-func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, scrapeCount int, baset int64) (uint64, error) {
+func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, m3dbMetrics []ident.Tags, scrapeCount int, baset int64) (uint64, error) {
 	ts := baset
-
-	type sample struct {
-		labels labels.Labels
-		value  int64
-		ref    *uint64
-	}
-
-	scrape := make([]*sample, 0, len(metrics))
-
-	for _, m := range metrics {
-		scrape = append(scrape, &sample{
-			labels: m,
-			value:  123456789,
-		})
-	}
 	total := uint64(0)
 
-	for i := 0; i < scrapeCount; i++ {
-		app := b.storage.Appender()
-		ts += timeDelta
-
-		for _, s := range scrape {
-			s.value += 1000
-
-			if s.ref == nil {
-				ref, err := app.Add(s.labels, ts, float64(s.value))
-				if err != nil {
-					panic(err)
-				}
-				s.ref = &ref
-			} else if err := app.AddFast(*s.ref, ts, float64(s.value)); err != nil {
-
-				if errors.Cause(err) != tsdb.ErrNotFound {
-					panic(err)
-				}
-
-				ref, err := app.Add(s.labels, ts, float64(s.value))
-				if err != nil {
-					panic(err)
-				}
-				s.ref = &ref
-			}
-
-			total++
+	if b.useM3DB() {
+		type sample struct {
+			labels ident.Tags
+			value  int64
+			ref    *uint64
 		}
-		if err := app.Commit(); err != nil {
-			return total, err
+
+		scrape := make([]*sample, 0, len(metrics))
+
+		for _, m := range m3dbMetrics {
+			scrape = append(scrape, &sample{
+				labels: m,
+				value:  123456789,
+			})
+		}
+
+		for i := 0; i < scrapeCount; i++ {
+			ts += timeDelta
+			for _, s := range scrape {
+				s.value += 1000
+				b.m3dbStorage.WriteTagged(nil, defaultM3DBNamespace, defaultSeriesID, nil, time.Unix(ts, 0), float64(s.value), xtime.Millisecond, nil)
+
+				total++
+			}
+		}
+
+	} else {
+		type sample struct {
+			labels labels.Labels
+			value  int64
+			ref    *uint64
+		}
+
+		scrape := make([]*sample, 0, len(metrics))
+
+		for _, m := range metrics {
+			scrape = append(scrape, &sample{
+				labels: m,
+				value:  123456789,
+			})
+		}
+
+		for i := 0; i < scrapeCount; i++ {
+			app := b.tsdbStorage.Appender()
+			ts += timeDelta
+
+			for _, s := range scrape {
+				s.value += 1000
+
+				if s.ref == nil {
+					ref, err := app.Add(s.labels, ts, float64(s.value))
+					if err != nil {
+						panic(err)
+					}
+					s.ref = &ref
+				} else if err := app.AddFast(*s.ref, ts, float64(s.value)); err != nil {
+
+					if errors.Cause(err) != tsdb.ErrNotFound {
+						panic(err)
+					}
+
+					ref, err := app.Add(s.labels, ts, float64(s.value))
+					if err != nil {
+						panic(err)
+					}
+					s.ref = &ref
+				}
+
+				total++
+			}
+			if err := app.Commit(); err != nil {
+				return total, err
+			}
 		}
 	}
+
 	return total, nil
 }
 
