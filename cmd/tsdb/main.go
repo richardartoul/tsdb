@@ -49,6 +49,7 @@ import (
 var (
 	defaultM3DBNamespace = ident.StringID("defaultM3DBNamespace")
 	defaultSeriesID      = ident.StringID("default_m3db_id")
+	defaultNumShardsM3DB = 1
 )
 
 func main() {
@@ -131,9 +132,11 @@ func (b *writeBenchmark) run() {
 	l = log.With(l, "ts", log.DefaultTimestampUTC, "caller", log.DefaultCaller)
 
 	if b.useM3DB() {
-		shardSet, err := sharding.NewShardSet([]shard.Shard{
-			shard.NewShard(0).SetState(shard.Available),
-		}, func(id ident.ID) uint32 { return uint32(0) })
+		var shards []shard.Shard
+		for i := 0; i < defaultNumShardsM3DB; i++ {
+			shards = append(shards, shard.NewShard(uint32(i)).SetState(shard.Available))
+		}
+		shardSet, err := sharding.NewShardSet(shards, sharding.DefaultHashFn(defaultNumShardsM3DB))
 		if err != nil {
 			exitWithError(err)
 		}
@@ -149,7 +152,8 @@ func (b *writeBenchmark) run() {
 				SetWritesToCommitLog(true).
 				SetCleanupEnabled(true).
 				SetRepairEnabled(false).
-				SetRetentionOptions(ropts))
+				SetRetentionOptions(ropts).
+				SetIndexOptions(namespace.NewIndexOptions().SetEnabled(true)))
 		if err != nil {
 			exitWithError(err)
 		}
@@ -165,6 +169,7 @@ func (b *writeBenchmark) run() {
 			SetNamespaceInitializer(namespace.NewStaticInitializer([]namespace.Metadata{md})).
 			SetRepairEnabled(false).
 			SetPersistManager(pm)
+			// SetIndexOptions(index.NewOptions().SetInsertMode(index.InsertAsync))
 
 		db, err := storage.NewDatabase(shardSet, opts)
 		if err != nil {
@@ -190,7 +195,7 @@ func (b *writeBenchmark) run() {
 
 	var (
 		metrics     []labels.Labels
-		m3dbMetrics []ident.Tags
+		m3dbMetrics []ident.TagsIterator
 	)
 	measureTime("readData", func() {
 		f, err := os.Open(b.samplesFile)
@@ -209,7 +214,7 @@ func (b *writeBenchmark) run() {
 			for _, tag := range metric {
 				m3dbMetric = append(m3dbMetric, ident.Tag{Name: ident.StringID(tag.Name), Value: ident.StringID(tag.Value)})
 			}
-			m3dbMetrics = append(m3dbMetrics, ident.NewTags(m3dbMetric...))
+			m3dbMetrics = append(m3dbMetrics, ident.NewTagsIterator(ident.NewTags(m3dbMetric...)))
 		}
 	})
 
@@ -245,7 +250,7 @@ func (b *writeBenchmark) run() {
 
 const timeDelta = 30000
 
-func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, m3dbMetrics []ident.Tags, scrapeCount int) (uint64, error) {
+func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, m3dbMetrics []ident.TagsIterator, scrapeCount int) (uint64, error) {
 	var mu sync.Mutex
 	var total uint64
 
@@ -306,31 +311,32 @@ func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, m3dbMetrics []ident
 	return total, nil
 }
 
-func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, m3dbMetrics []ident.Tags, scrapeCount int, baset int64) (uint64, error) {
+func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, m3dbMetrics []ident.TagsIterator, scrapeCount int, baset int64) (uint64, error) {
 	ts := baset
 	total := uint64(0)
 
 	if b.useM3DB() {
 		type sample struct {
-			labels ident.Tags
-			value  int64
-			ref    *uint64
+			tags  ident.TagsIterator
+			value int64
+			ref   *uint64
 		}
 
 		scrape := make([]*sample, 0, len(metrics))
 
 		for _, m := range m3dbMetrics {
 			scrape = append(scrape, &sample{
-				labels: m,
-				value:  123456789,
+				tags:  m,
+				value: 123456789,
 			})
 		}
 
 		for i := 0; i < scrapeCount; i++ {
 			ts += timeDelta
+			id := ident.StringID(string(i))
 			for _, s := range scrape {
 				s.value += 1000
-				b.m3dbStorage.WriteTagged(nil, defaultM3DBNamespace, defaultSeriesID, nil, time.Unix(ts, 0), float64(s.value), xtime.Millisecond, nil)
+				b.m3dbStorage.WriteTagged(nil, defaultM3DBNamespace, id, s.tags, time.Unix(ts, 0), float64(s.value), xtime.Millisecond, nil)
 
 				total++
 			}
