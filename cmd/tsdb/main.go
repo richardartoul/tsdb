@@ -33,6 +33,7 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/m3db/m3/src/cluster/shard"
 	"github.com/m3db/m3/src/dbnode/persist/fs"
+	"github.com/m3db/m3/src/dbnode/persist/fs/commitlog"
 	"github.com/m3db/m3/src/dbnode/retention"
 	"github.com/m3db/m3/src/dbnode/sharding"
 	"github.com/m3db/m3/src/dbnode/storage"
@@ -144,7 +145,9 @@ func (b *writeBenchmark) run() {
 
 		ropts := retention.NewOptions().
 			SetRetentionPeriod(15 * 24 * 60 * 60 * 1000 * time.Millisecond).
-			SetBlockSize(2 * time.Hour)
+			SetBlockSize(2 * time.Hour).
+			SetBufferPast(time.Hour).
+			SetBufferFuture(time.Hour)
 
 		md, err := namespace.NewMetadata(defaultM3DBNamespace,
 			namespace.NewOptions().
@@ -169,7 +172,9 @@ func (b *writeBenchmark) run() {
 			SetSeriesCachePolicy(series.CacheRecentlyRead).
 			SetNamespaceInitializer(namespace.NewStaticInitializer([]namespace.Metadata{md})).
 			SetRepairEnabled(false).
-			SetPersistManager(pm)
+			SetPersistManager(pm).
+			SetCommitLogOptions(commitlog.NewOptions().
+				SetBacklogQueueSize(400000))
 
 		db, err := storage.NewDatabase(shardSet, opts)
 		if err != nil {
@@ -262,7 +267,10 @@ func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, m3dbMetrics []ident
 	var total uint64
 
 	for i := 0; i < scrapeCount; i += 100 {
-		var wg sync.WaitGroup
+		var (
+			wg  sync.WaitGroup
+			now = time.Now().UnixNano()
+		)
 
 		if b.useM3DB() {
 			lbls := m3dbMetrics
@@ -276,7 +284,7 @@ func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, m3dbMetrics []ident
 
 				wg.Add(1)
 				go func() {
-					n, err := b.ingestScrapesShard(nil, batch, 100, int64(timeDelta*i))
+					n, err := b.ingestScrapesShard(nil, batch, 100, int64(timeDelta+now))
 					if err != nil {
 						// exitWithError(err)
 						fmt.Println(" err", err)
@@ -343,7 +351,11 @@ func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, m3dbMetrics
 			id := ident.StringID(string(i))
 			for _, s := range scrape {
 				s.value += 1000
-				b.m3dbStorage.WriteTagged(nil, defaultM3DBNamespace, id, s.tags, time.Unix(ts, 0), float64(s.value), xtime.Millisecond, nil)
+				err := b.m3dbStorage.WriteTagged(
+					nil, defaultM3DBNamespace, id, s.tags, time.Unix(0, ts), float64(s.value), xtime.Millisecond, nil)
+				if err != nil {
+					panic(err)
+				}
 
 				total++
 			}
