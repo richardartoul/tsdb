@@ -92,8 +92,9 @@ type writeBenchmark struct {
 	numMetrics    int
 	storageEngine string
 
-	tsdbStorage *tsdb.DB
-	m3dbStorage storage.Database
+	tsdbStorage   *tsdb.DB
+	m3dbStorage   storage.Database
+	m3dbNamespace storage.Namespace
 
 	cpuprof   *os.File
 	memprof   *os.File
@@ -169,7 +170,6 @@ func (b *writeBenchmark) run() {
 			SetNamespaceInitializer(namespace.NewStaticInitializer([]namespace.Metadata{md})).
 			SetRepairEnabled(false).
 			SetPersistManager(pm)
-			// SetIndexOptions(index.NewOptions().SetInsertMode(index.InsertAsync))
 
 		db, err := storage.NewDatabase(shardSet, opts)
 		if err != nil {
@@ -181,6 +181,13 @@ func (b *writeBenchmark) run() {
 			exitWithError(err)
 		}
 		b.m3dbStorage = db
+		namespace, ok := db.Namespace(defaultM3DBNamespace)
+		if !ok {
+			exitWithError(fmt.Errorf("could not retrieve default m3db namespace"))
+		}
+
+		b.m3dbNamespace = namespace
+
 	} else {
 		st, err := tsdb.Open(dir, l, nil, &tsdb.Options{
 			WALFlushInterval:  200 * time.Millisecond,
