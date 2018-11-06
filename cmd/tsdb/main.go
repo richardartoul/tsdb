@@ -49,7 +49,7 @@ import (
 var (
 	defaultM3DBNamespace = ident.StringID("defaultM3DBNamespace")
 	defaultSeriesID      = ident.StringID("default_m3db_id")
-	defaultNumShardsM3DB = 1
+	defaultNumShardsM3DB = 100
 )
 
 func main() {
