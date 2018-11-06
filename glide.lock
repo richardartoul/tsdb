@@ -1,5 +1,5 @@
-hash: f81a096ae02de3d63e11c413c1c5f00f5d811b13676d643a3098014e65d1f741
-updated: 2018-11-05T17:28:52.515654+02:00
+hash: ae70bbaba8e3c3edf5fbad1dd6b2eb86ce3ede22ca172d1753127886113153af
+updated: 2018-11-06T18:33:47.893842+02:00
 imports:
 - name: github.com/alecthomas/template
   version: a0175ee3bccc567396460bf5acd36800cb10c49c
@@ -75,7 +75,7 @@ imports:
 - name: github.com/m3db/bloom
   version: 47fe1193cdb900de7193d1f3d26ea9b2cbf6fb31
 - name: github.com/m3db/m3
-  version: 0fd715a40274ea2d44beb8c27b5ebfec9572d681
+  version: 00a4a7100d55cbcb18b0350b07987361eb0bf41d
   subpackages:
   - src/cluster/client
   - src/cluster/client/etcd

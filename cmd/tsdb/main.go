@@ -349,6 +349,7 @@ func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, m3dbMetrics
 		for i := 0; i < scrapeCount; i++ {
 			ts += timeDelta
 			id := ident.StringID(string(i))
+			//
 			for _, s := range scrape {
 				s.value += 1000
 				err := b.m3dbStorage.WriteTagged(
