@@ -1,5 +1,5 @@
-hash: ae70bbaba8e3c3edf5fbad1dd6b2eb86ce3ede22ca172d1753127886113153af
-updated: 2018-11-06T18:33:47.893842+02:00
+hash: ced11e4291217196e2745a76a01126e19951c2ee87bcdcc1d300c863e0705f16
+updated: 2018-11-09T17:43:52.507138-05:00
 imports:
 - name: github.com/alecthomas/template
   version: a0175ee3bccc567396460bf5acd36800cb10c49c
@@ -14,7 +14,7 @@ imports:
   subpackages:
   - lib/go/thrift
 - name: github.com/beorn7/perks
-  version: 3a771d992973f24aa725d07868b467d1ddfceafb
+  version: 4c0e84591b9aa9e6dcfdf3e020114cd81f89d5f9
   subpackages:
   - quantile
 - name: github.com/cespare/xxhash
@@ -43,12 +43,14 @@ imports:
 - name: github.com/glycerine/go-unsnap-stream
   version: 9f0cb55181dd3a0a4c168d3dbc72d4aca4853126
 - name: github.com/go-kit/kit
-  version: 9fd144b1f3aa7775dfdb90084215a6555e9f163d
+  version: 04dd4f741c6e76cc170a4d7913f4c625952e6f58
   subpackages:
   - log
   - log/level
 - name: github.com/go-logfmt/logfmt
   version: 390ab7935ee28ec6b286364bba9b4dd6410cb3d5
+- name: github.com/go-stack/stack
+  version: 54be5f394ed2c3e19dac9134a40a95ba5a017f7b
 - name: github.com/gogo/protobuf
   version: 636bf0302bc95575d69441b25a2603156ffdddf1
   subpackages:
@@ -75,7 +77,7 @@ imports:
 - name: github.com/m3db/bloom
   version: 47fe1193cdb900de7193d1f3d26ea9b2cbf6fb31
 - name: github.com/m3db/m3
-  version: 00a4a7100d55cbcb18b0350b07987361eb0bf41d
+  version: f8b2897a2c2c1c2bcdb795a1ce82c347f10aa34c
   subpackages:
   - src/cluster/client
   - src/cluster/client/etcd
@@ -213,7 +215,7 @@ imports:
 - name: github.com/mschoch/smat
   version: 90eadee771aeab36e8bf796039b8c261bebebe4f
 - name: github.com/oklog/ulid
-  version: f41f974e7fd381ab4f116d484f5df5a4ac7a41ba
+  version: 66bb6560562feca7045b23db1ae85b01260f87c5
 - name: github.com/opentracing/opentracing-go
   version: 855519783f479520497c6b3445611b05fc42f009
   subpackages:
@@ -225,18 +227,17 @@ imports:
   subpackages:
   - roaring
 - name: github.com/pkg/errors
-  version: 059132a15dd08d6704c67711dae0cf35ab991756
+  version: 645ef00459ed84a119197bfb8d8205042c6df63d
 - name: github.com/pmezard/go-difflib
   version: d8ed2627bdf02c080bf22230dbb337003b7aba2d
   subpackages:
   - difflib
 - name: github.com/prometheus/client_golang
-  version: abad2d1bd44235a26707c172eab6bca5bf2dbad3
+  version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:
   - prometheus
-  - prometheus/internal
 - name: github.com/prometheus/client_model
-  version: 5c3871d89910bfb32f5fcab2aa4b9ec68e65a99f
+  version: 6f3806018612930941127f2a7c6c453ba2c527d2
   subpackages:
   - go
 - name: github.com/prometheus/common
@@ -316,11 +317,11 @@ imports:
   - lex/httplex
   - trace
 - name: golang.org/x/sync
-  version: 1d60e4601c6fd243af51cc01ddf169918a5407ca
+  version: 450f422ab23cf9881c94e2db30cac0eb1b7cf80c
   subpackages:
   - errgroup
 - name: golang.org/x/sys
-  version: 9b800f95dbbc54abff0acf7ee32d88ba4e328c89
+  version: e48874b42435b4347fc52bdee0424a52abc974d7
   subpackages:
   - unix
 - name: golang.org/x/text

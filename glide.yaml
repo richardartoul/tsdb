@@ -18,7 +18,7 @@ import:
   - unix
 - package: gopkg.in/alecthomas/kingpin.v2
 - package: github.com/m3db/m3
-  version: 00a4a7100d55cbcb18b0350b07987361eb0bf41d
+  version: f8b2897a2c2c1c2bcdb795a1ce82c347f10aa34c
   subpackages:
     - src/dbnode
 testImport:

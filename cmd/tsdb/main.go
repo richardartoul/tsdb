@@ -39,7 +39,7 @@ import (
 	"github.com/m3db/m3/src/dbnode/storage"
 	"github.com/m3db/m3/src/dbnode/storage/namespace"
 	"github.com/m3db/m3/src/dbnode/storage/series"
-	m3dbTs "github.com/m3db/m3/src/dbnode/ts"
+	xts "github.com/m3db/m3/src/dbnode/ts"
 	"github.com/m3db/m3x/ident"
 	xtime "github.com/m3db/m3x/time"
 	"github.com/pkg/errors"
@@ -51,7 +51,7 @@ import (
 var (
 	defaultM3DBNamespace = ident.StringID("defaultM3DBNamespace")
 	defaultSeriesID      = ident.StringID("default_m3db_id")
-	defaultNumShardsM3DB = 100
+	defaultNumShardsM3DB = 1
 )
 
 func main() {
@@ -175,8 +175,8 @@ func (b *writeBenchmark) run() {
 			SetRepairEnabled(false).
 			SetPersistManager(pm).
 			SetCommitLogOptions(commitlog.NewOptions().
-				SetBacklogQueueSize(400000).
-				SetFlushSize(512000 * 4).
+				SetBacklogQueueSize(4000000).
+				// SetFlushSize(512000 * 4).
 				SetBlockSize(2 * time.Hour))
 
 		db, err := storage.NewDatabase(shardSet, opts)
@@ -278,8 +278,8 @@ func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, m3dbMetrics []ident
 		if b.useM3DB() {
 			lbls := m3dbMetrics
 			for len(lbls) > 0 {
-				l := 1000
-				if len(lbls) < 1000 {
+				l := 100
+				if len(lbls) < 100 {
 					l = len(lbls)
 				}
 				batch := lbls[:l]
@@ -335,6 +335,7 @@ func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, m3dbMetrics
 
 	if b.useM3DB() {
 		type sample struct {
+			id    ident.ID
 			tags  ident.TagsIterator
 			value int64
 			ref   *uint64
@@ -342,42 +343,30 @@ func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, m3dbMetrics
 
 		scrape := make([]*sample, 0, len(metrics))
 
-		for _, m := range m3dbMetrics {
+		for i, m := range m3dbMetrics {
 			scrape = append(scrape, &sample{
+				id:    ident.StringID(string(i)),
 				tags:  m,
 				value: 123456789,
 			})
 		}
 
-		batch := make(commitlog.WritesBatch, len(scrape))
-		for i := 0; i < scrapeCount; i++ {
-			ts += timeDelta
-			id := ident.StringID(string(i))
-			for j, s := range scrape {
-				s.value += 1000
-				batch[j] = commitlog.Write{
-					Series: commitlog.Series{
-						Namespace: defaultM3DBNamespace,
-						ID:        id,
-						TagIter:   s.tags,
-					},
-					Datapoint: m3dbTs.Datapoint{
-						Timestamp: time.Unix(0, ts),
-						Value:     float64(s.value),
-					},
-					Unit:       xtime.Millisecond,
-					Annotation: nil,
-				}
-				// err := b.m3dbStorage.WriteTagged(
-				// 	nil, defaultM3DBNamespace, id, s.tags, time.Unix(0, ts), float64(s.value), xtime.Millisecond, nil)
-				// if err != nil {
-				// 	panic(err)
-				// }
+		// batch := make(commitlog.WritesBatch, len(scrape))
 
+		for j := 0; j < scrapeCount; j++ {
+			ts += timeDelta
+			batch, err := b.m3dbStorage.WriteTaggedBatchWriter(defaultM3DBNamespace, len(scrape))
+			if err != nil {
+				panic(err)
+			}
+			for _, s := range scrape {
+				s.value += 1000
+				batch.AddTagged(s.id, s.tags, time.Unix(0, ts), float64(s.value), xtime.Millisecond, nil)
+				// b.m3dbStorage.WriteTagged(nil, defaultM3DBNamespace, s.id, s.tags, time.Unix(0, ts), float64(s.value), xtime.Millisecond, nil)
 				total++
 			}
 
-			err := b.m3dbStorage.WriteTaggedBatch(nil, defaultM3DBNamespace, batch)
+			err = b.m3dbStorage.WriteTaggedBatch(nil, defaultM3DBNamespace, batch.(xts.WriteBatch))
 			if err != nil {
 				panic(err)
 			}
